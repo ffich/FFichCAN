@@ -1,0 +1,1 @@
+python -m PyInstaller --onefile --noconsole --name FFichCAN --hidden-import can.interfaces.pcan --collect-all python-can --collect-all udsoncan --collect-all can-isotp can_interface.py
