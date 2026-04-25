@@ -1,0 +1,37 @@
+{
+    "version": "1.0",
+    "connection": {
+        "channel": "PCAN_USBBUS1",
+        "bitrate": "500000",
+        "data_bitrate": "2000000",
+        "fd": false
+    },
+    "dbc": "C:/Users/franc/.gemini/antigravity/scratch/Sinergy/HLU_v2.dbc",
+    "uds": {
+        "tx_id": "7E0",
+        "rx_id": "7E7",
+        "sid": "10",
+        "payload": "01"
+    },
+    "tx_rows": [
+        {
+            "id": "",
+            "dlc": "8",
+            "data": [
+                "00",
+                "00",
+                "00",
+                "00",
+                "00",
+                "00",
+                "00",
+                "00"
+            ],
+            "fd": false,
+            "ext": false,
+            "periodic": false,
+            "period": "100",
+            "signals": {}
+        }
+    ]
+}

@@ -2,3 +2,4 @@ python-can
 uptime
 udsoncan
 can-isotp
+cantools

@@ -5,7 +5,7 @@ FFichCAN is a feature-rich, open-source Graphical User Interface (GUI) wrapper f
 ## Features
 
 - **Dynamic Hardware Discovery:** Automatic detection of available PEAK-System adapters.
-- **CAN & CAN-FD Support:** Toggle between standard CAN 2.0b and extended data-rate CAN-FD natively.
+- **CAN & CAN-FD Support:** Toggle between standard CAN 2.0b and extended data-rate CAN-FD natively. In FD mode, you can specify both **Nominal Bitrate** and **Data Bitrate** for maximum performance.
 - **Traffic Interception:** Real-time log of both incoming (RX) and echoing transmitted (TX) messages, including accurate message period tracking.
 - **Dynamic Transmit Dashboard:** A scalable, scrollable layout allowing you to define multiple transmit frames simultaneously. Each frame supports unique ID, DLC, extended/FD toggles, 8 clean hex data byte cells, and periodic background injection.
 - **Diagnostics (UDS & ISO-TP):** A dedicated diagnostic interface allowing you to transmit precise payloads over ISO 15765-2 (ISO-TP) and receive ISO 14229 (UDS) responses.

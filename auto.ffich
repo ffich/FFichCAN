@@ -1,0 +1,42 @@
+{
+    "version": "1.0",
+    "connection": {
+        "channel": "PCAN_USBBUS1",
+        "bitrate": "500000",
+        "data_bitrate": "1000000",
+        "fd": false
+    },
+    "dbc": "C:/Users/franc/.gemini/antigravity/scratch/Sinergy/HLU_v2.dbc",
+    "uds": {
+        "tx_id": "7E0",
+        "rx_id": "7E8",
+        "sid": "22",
+        "payload": "F1 90"
+    },
+    "tx_rows": [
+        {
+            "id": "HLU_CMD (0x401)",
+            "dlc": "8",
+            "data": [
+                "04",
+                "00",
+                "00",
+                "00",
+                "00",
+                "00",
+                "00",
+                "00"
+            ],
+            "fd": false,
+            "ext": false,
+            "periodic": false,
+            "period": "1000",
+            "signals": {
+                "Lamp_Main_Cmd": "0",
+                "Lamp_Brights_Cmd": "0",
+                "Blinker_Cmd": "1",
+                "FMH_Config_Cmd": "0"
+            }
+        }
+    ]
+}
