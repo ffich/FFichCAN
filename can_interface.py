@@ -37,8 +37,8 @@ class CanInterfaceApp:
     def __init__(self, root):
         self.root = root
         self.root.title("FFichCAN")
-        self.root.geometry("1200x850")
-        self.root.minsize(1000, 650)
+        self.root.geometry("1400x900")
+        self.root.minsize(1200, 700)
 
         self.bus = None
         self.notifier = None
@@ -48,14 +48,20 @@ class CanInterfaceApp:
         self.tx_rows = []
         self.uds_buffer = None
         self.uds_overwrite_var = tk.BooleanVar(value=False)
+        self.uds_fd_var = tk.BooleanVar(value=False)
         self.show_ascii_var = tk.BooleanVar(value=False)
         
         # DBC state
         self.db = None
         self.db_path = None
         self.signal_items = {} # (msg_id, sig_name) -> tree_item_id
+        self.data_overflow_items = {} # (msg_id_hex, chunk_idx) -> iid
+        self.message_data = {} # msg_id_hex -> full_bytes
         self.last_ui_update = {} # msg_id -> last_time_sig_updated
         self.signal_values = {} # sig_name -> latest_value
+
+        self.style = ttk.Style()
+        # Removed custom rowheight
 
         self.create_widgets()
         
@@ -85,8 +91,8 @@ class CanInterfaceApp:
         self.bitrate_cb.set("500000")
         self.bitrate_cb.pack(side=tk.LEFT, padx=5)
 
-        self.data_bitrate_label = ttk.Label(control_frame, text="Data Bitrate:")
-        self.data_bitrate_cb = ttk.Combobox(control_frame, values=["1000000", "2000000", "4000000", "5000000"], width=10)
+        self.data_bitrate_label = ttk.Label(control_frame, text="FD Data Rate:")
+        self.data_bitrate_cb = ttk.Combobox(control_frame, values=["1000000", "2000000", "4000000", "5000000", "8000000"], width=10)
         self.data_bitrate_cb.set("2000000")
         
         self.fd_var = tk.BooleanVar(value=False)
@@ -129,11 +135,12 @@ class CanInterfaceApp:
         data_frame = ttk.LabelFrame(self.tab_bus, text="Incoming Messages")
         data_frame.pack(side=tk.TOP, fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        self.tree = ttk.Treeview(data_frame, columns=("Time", "Period", "RX/TX", "ID", "DLC", "Data"), show="tree headings")
+        self.tree = ttk.Treeview(data_frame, columns=("Time", "Period", "RX/TX", "Type", "ID", "DLC", "Data"), show="tree headings")
         self.tree.heading("#0", text="Message/Signal Name")
         self.tree.heading("Time", text="Time")
         self.tree.heading("Period", text="Period (ms)")
         self.tree.heading("RX/TX", text="RX/TX")
+        self.tree.heading("Type", text="Type")
         self.tree.heading("ID", text="ID (Hex)")
         self.tree.heading("DLC", text="DLC")
         self.tree.heading("Data", text="Data / Value")
@@ -142,15 +149,22 @@ class CanInterfaceApp:
         self.tree.column("Time", width=110, anchor=tk.W)
         self.tree.column("Period", width=80, anchor=tk.CENTER)
         self.tree.column("RX/TX", width=60, anchor=tk.CENTER)
+        self.tree.column("Type", width=70, anchor=tk.CENTER)
         self.tree.column("ID", width=100, anchor=tk.W)
         self.tree.column("DLC", width=50, anchor=tk.CENTER)
-        self.tree.column("Data", width=250, anchor=tk.W)
+        self.tree.column("Data", width=300, anchor=tk.W)
         
-        scrollbar = ttk.Scrollbar(data_frame, orient=tk.VERTICAL, command=self.tree.yview)
-        self.tree.configure(yscroll=scrollbar.set)
+        v_scrollbar = ttk.Scrollbar(data_frame, orient=tk.VERTICAL, command=self.tree.yview)
+        # Keep horizontal scrollbar but it will be less needed
+        h_scrollbar = ttk.Scrollbar(data_frame, orient=tk.HORIZONTAL, command=self.tree.xview)
+        self.tree.configure(yscroll=v_scrollbar.set, xscroll=h_scrollbar.set)
         
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-        self.tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.tree.grid(row=0, column=0, sticky="nsew")
+        v_scrollbar.grid(row=0, column=1, sticky="ns")
+        h_scrollbar.grid(row=1, column=0, sticky="ew")
+        
+        data_frame.grid_rowconfigure(0, weight=1)
+        data_frame.grid_columnconfigure(0, weight=1)
 
         self.tree.bind("<Double-1>", self.on_message_double_click)
 
@@ -196,6 +210,8 @@ class CanInterfaceApp:
         self.uds_rx_id = ttk.Entry(config_frame, width=8)
         self.uds_rx_id.insert(0, "7E8")
         self.uds_rx_id.pack(side=tk.LEFT, padx=5)
+        
+        ttk.Checkbutton(config_frame, text="Use CAN FD", variable=self.uds_fd_var).pack(side=tk.LEFT, padx=10)
         
         req_frame = ttk.LabelFrame(parent, text="UDS Request")
         req_frame.pack(side=tk.TOP, fill=tk.X, padx=10, pady=5)
@@ -341,6 +357,7 @@ class CanInterfaceApp:
             "uds": {
                 "tx_id": self.uds_tx_id.get(),
                 "rx_id": self.uds_rx_id.get(),
+                "fd": self.uds_fd_var.get(),
                 "sid": self.uds_sid.get(),
                 "payload": self.uds_payload.get()
             },
@@ -388,6 +405,7 @@ class CanInterfaceApp:
             self.uds_tx_id.insert(0, uds.get("tx_id", "7E0"))
             self.uds_rx_id.delete(0, tk.END)
             self.uds_rx_id.insert(0, uds.get("rx_id", "7E8"))
+            self.uds_fd_var.set(uds.get("fd", False))
             self.uds_sid.delete(0, tk.END)
             self.uds_sid.insert(0, uds.get("sid", "10"))
             self.uds_payload.delete(0, tk.END)
@@ -472,7 +490,16 @@ class CanInterfaceApp:
             addr = isotp.Address(isotp.AddressingMode.Normal_11bits, txid=txid, rxid=rxid)
             # Use wrapper to share bus with Notifier
             wrapper = IsotpBusWrapper(self.bus, self.uds_buffer)
-            stack = isotp.CanStack(wrapper, address=addr)
+            
+            # Configure ISO-TP for FD if enabled
+            isotp_params = {}
+            if self.uds_fd_var.get():
+                isotp_params = {
+                    'tx_data_length': 64, # Max FD length
+                    'can_fd': True
+                }
+            
+            stack = isotp.CanStack(wrapper, address=addr, params=isotp_params)
             conn = PythonIsoTpConnection(stack)
             conn.open()
             
@@ -517,29 +544,6 @@ class CanInterfaceApp:
             self.data_bitrate_label.pack_forget()
             self.data_bitrate_cb.pack_forget()
 
-    def get_pcan_fd_string(self, nom_k, data_k):
-        # PCAN FD String mapping for 80MHz clock (standard for PCAN-USB FD)
-        # Updated with user-provided working values: BRP=4, SSP Offset=32
-        
-        nom_map = {
-            "125000": "f_clock_mhz=80,nom_brp=16,nom_tseg1=31,nom_tseg2=8,nom_sjw=8",
-            "250000": "f_clock_mhz=80,nom_brp=8,nom_tseg1=31,nom_tseg2=8,nom_sjw=8",
-            "500000": "f_clock_mhz=80,nom_brp=4,nom_tseg1=31,nom_tseg2=8,nom_sjw=8",
-            "1000000": "f_clock_mhz=80,nom_brp=2,nom_tseg1=31,nom_tseg2=8,nom_sjw=8",
-        }
-        
-        data_map = {
-            "1000000": "data_brp=2,data_tseg1=31,data_tseg2=8,data_sjw=8,ssp_offset=32",
-            "2000000": "data_brp=1,data_tseg1=31,data_tseg2=8,data_sjw=8,ssp_offset=32",
-            "4000000": "data_brp=1,data_tseg1=15,data_tseg2=4,data_sjw=4,ssp_offset=16",
-            "5000000": "data_brp=1,data_tseg1=12,data_tseg2=3,data_sjw=3,ssp_offset=13",
-        }
-        
-        nom_part = nom_map.get(nom_k, nom_map["500000"])
-        data_part = data_map.get(data_k, data_map["2000000"])
-        
-        return f"{nom_part},{data_part}".encode('utf-8')
-
     def toggle_connection(self):
         if self.is_connected:
             self.disconnect()
@@ -562,20 +566,37 @@ class CanInterfaceApp:
         try:
             # Initialize python-can bus for Peak adapter
             if is_fd:
-                # Construct valid PCAN-FD timing string
                 data_bitrate_str = self.data_bitrate_cb.get()
-                pcan_str = self.get_pcan_fd_string(bitrate_str, data_bitrate_str)
+                nom_bitrate = int(bitrate_str)
+                data_bitrate = int(data_bitrate_str)
                 
-                # We pass pcan_str to 'bitrate' and explicitly set data_bitrate to None 
-                # as python-can's pcan interface expects the FD string in the bitrate field.
-                self.bus = can.interface.Bus(
-                    interface='pcan', 
-                    channel=channel, 
-                    bitrate=pcan_str, 
-                    data_bitrate=None,
-                    fd=True, 
-                    receive_own_messages=True
-                )
+                # Use explicit timing parameters for PCAN-FD (80MHz clock)
+                # This ensures stability across different driver versions
+                params = {
+                    'channel': channel,
+                    'fd': True,
+                    'f_clock_mhz': 80,
+                    'nom_brp': 4 if nom_bitrate == 500000 else (2 if nom_bitrate == 1000000 else 8),
+                    'nom_tseg1': 31,
+                    'nom_tseg2': 8,
+                    'nom_sjw': 8,
+                    'receive_own_messages': True
+                }
+                
+                # Dynamic data bitrate timings for 80MHz
+                if data_bitrate == 2000000:
+                    params.update({'data_brp': 1, 'data_tseg1': 31, 'data_tseg2': 8, 'data_sjw': 8, 'ssp_offset': 32})
+                elif data_bitrate == 1000000:
+                    params.update({'data_brp': 2, 'data_tseg1': 31, 'data_tseg2': 8, 'data_sjw': 8, 'ssp_offset': 32})
+                elif data_bitrate == 4000000:
+                    params.update({'data_brp': 1, 'data_tseg1': 15, 'data_tseg2': 4, 'data_sjw': 4, 'ssp_offset': 16})
+                elif data_bitrate == 8000000:
+                    params.update({'data_brp': 1, 'data_tseg1': 7, 'data_tseg2': 2, 'data_sjw': 2, 'ssp_offset': 8})
+                else: # Default or others (e.g. 5M)
+                    # Use python-can's internal calculation if possible, or fallback to 2M
+                    params.update({'data_brp': 1, 'data_tseg1': 31, 'data_tseg2': 8, 'data_sjw': 8, 'ssp_offset': 32})
+                
+                self.bus = can.interfaces.pcan.PcanBus(**params)
             else:
                 bitrate = int(bitrate_str)
                 self.bus = can.interface.Bus(interface='pcan', channel=channel, bitrate=bitrate, receive_own_messages=True)
@@ -624,6 +645,9 @@ class CanInterfaceApp:
         self.root.after(0, self._insert_msg_to_tree, msg, direction)
 
     def _insert_msg_to_tree(self, msg, direction="RX"):
+        if msg.arbitration_id == 1:
+            return
+            
         ts = msg.timestamp if msg.timestamp and msg.timestamp > 0 else time.time()
         timestamp = datetime.fromtimestamp(ts).strftime('%H:%M:%S.%f')[:-3]
         msg_id_val = msg.arbitration_id
@@ -638,9 +662,15 @@ class CanInterfaceApp:
             period_str = "-"
         self.last_timestamps[cache_key] = ts
         
+        msg_type = "CAN FD" if msg.is_fd else "CAN 2.0"
         dlc = str(msg.dlc)
-        # Standardize spaces for easier decoding later if needed
-        data_hex = " ".join(f"{b:02X}" for b in msg.data)
+        data_hex_list = [f"{b:02X}" for b in msg.data]
+        self.message_data[msg_id_hex] = msg.data
+        
+        # Show only first 8 bytes in main row
+        main_data_hex = " ".join(data_hex_list[:8])
+        if len(data_hex_list) > 8:
+            main_data_hex += " ..."
         
         # Determine Message Name from DBC
         msg_name = msg_id_hex
@@ -656,7 +686,7 @@ class CanInterfaceApp:
             except (KeyError, ValueError):
                 pass
 
-        values = (timestamp, period_str, direction, msg_id_hex, dlc, data_hex)
+        values = (timestamp, period_str, direction, msg_type, msg_id_hex, dlc, main_data_hex)
 
         if msg_id_hex in self.message_items:
             iid = self.message_items[msg_id_hex]
@@ -664,6 +694,24 @@ class CanInterfaceApp:
         else:
             iid = self.tree.insert("", tk.END, text=msg_name, values=values)
             self.message_items[msg_id_hex] = iid
+            
+        # Handle data overflow as child rows
+        if len(data_hex_list) > 8:
+            for i in range(8, len(data_hex_list), 8):
+                chunk_idx = i // 8
+                chunk_data = " ".join(data_hex_list[i:i+8])
+                ov_key = (msg_id_hex, chunk_idx)
+                
+                # Show byte range in Name column
+                chunk_name = f"  ↳ Data[{i:02}:{min(i+7, len(data_hex_list)-1):02}]"
+                ov_values = ("", "", "", "", "", "", chunk_data)
+                
+                if ov_key in self.data_overflow_items:
+                    oiid = self.data_overflow_items[ov_key]
+                    self.tree.item(oiid, text=chunk_name, values=ov_values)
+                else:
+                    oiid = self.tree.insert(iid, tk.END, text=chunk_name, values=ov_values)
+                    self.data_overflow_items[ov_key] = oiid
 
         # Update children signals with throttling
         now = time.time()
@@ -712,7 +760,8 @@ class CanInterfaceApp:
         vals = self.tree.item(item, "values")
         if not vals: return
         
-        msg_id_hex = vals[3]
+        msg_type = vals[3]
+        msg_id_hex = vals[4]
         
         # Create Popup
         pop = tk.Toplevel(self.root)
@@ -723,7 +772,7 @@ class CanInterfaceApp:
         main_f.pack(fill=tk.BOTH, expand=True)
         
         ttk.Label(main_f, text=f"Message: {msg_name}", font=("Arial", 12, "bold")).pack(anchor=tk.W)
-        ttk.Label(main_f, text=f"ID: 0x{msg_id_hex} | DLC: {vals[4]} | Dir: {vals[2]}").pack(anchor=tk.W, pady=(0, 10))
+        ttk.Label(main_f, text=f"Type: {msg_type} | ID: 0x{msg_id_hex} | DLC: {vals[5]} | Dir: {vals[2]}").pack(anchor=tk.W, pady=(0, 10))
         
         data_f = ttk.LabelFrame(main_f, text="Signals Decoding", padding=5)
         data_f.pack(fill=tk.BOTH, expand=True)
@@ -745,8 +794,11 @@ class CanInterfaceApp:
             try:
                 mid = int(msg_id_hex, 16)
                 msg_def = self.db.get_message_by_frame_id(mid)
-                raw_data_hex = vals[5].replace(" ", "")
-                raw_data = bytes.fromhex(raw_data_hex)
+                raw_data = self.message_data.get(msg_id_hex)
+                if raw_data is None:
+                    raw_data_hex = vals[6].replace(" ", "").replace("...", "")
+                    raw_data = bytes.fromhex(raw_data_hex)
+                
                 decoded = msg_def.decode(raw_data)
                 
                 for sig in msg_def.signals:
@@ -762,6 +814,7 @@ class CanInterfaceApp:
         self.message_items.clear()
         self.last_timestamps.clear()
         self.signal_items.clear()
+        self.data_overflow_items.clear()
         self.last_ui_update.clear()
 
     def add_tx_row(self):
@@ -792,19 +845,23 @@ class TxRow:
         self.id_entry.bind("<Return>", lambda e: self.check_dbc())
         
         ttk.Label(main_line, text="DLC:").pack(side=tk.LEFT)
-        self.dlc_entry = ttk.Entry(main_line, width=3)
-        self.dlc_entry.insert(0, "8")
+        self.dlc_entry = ttk.Combobox(main_line, width=3, values=["0","1","2","3","4","5","6","7","8"])
+        self.dlc_entry.set("8")
         self.dlc_entry.pack(side=tk.LEFT, padx=2)
+        self.dlc_entry.bind("<<ComboboxSelected>>", self.on_dlc_change)
+        self.dlc_entry.bind("<FocusOut>", self.on_dlc_change)
+        self.dlc_entry.bind("<Return>", self.on_dlc_change)
         
-        self.data_entries = []
-        for i in range(8):
-            e = ttk.Entry(main_line, width=3)
-            e.insert(0, "00")
-            e.pack(side=tk.LEFT, padx=1)
-            self.data_entries.append(e)
+        ttk.Label(main_line, text="Data(Hex):").pack(side=tk.LEFT)
+        self.data_entry = ttk.Entry(main_line, width=50)
+        self.data_entry.insert(0, "00 00 00 00 00 00 00 00")
+        self.data_entry.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
+        self.data_entry.bind("<KeyRelease>", self.format_data_entry)
             
-        self.fd_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(main_line, text="FD", variable=self.fd_var).pack(side=tk.LEFT, padx=2)
+        self.fd_var = tk.BooleanVar(value=app.fd_var.get())
+        self.fd_check = ttk.Checkbutton(main_line, text="FD", variable=self.fd_var, command=self.update_dlc_options)
+        self.fd_check.pack(side=tk.LEFT, padx=2)
+        self.update_dlc_options()
         
         self.ext_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(main_line, text="EXT", variable=self.ext_var).pack(side=tk.LEFT, padx=2)
@@ -887,8 +944,7 @@ class TxRow:
         if not self.msg_def: return
         
         # Update DLC automatically
-        self.dlc_entry.delete(0, tk.END)
-        self.dlc_entry.insert(0, str(self.msg_def.length))
+        self.dlc_entry.set(str(self.msg_def.length))
         
         # Create small entry for each signal
         for i, sig in enumerate(self.msg_def.signals):
@@ -907,6 +963,55 @@ class TxRow:
         for widget in self.sig_frame.winfo_children():
             widget.destroy()
         self.sig_entries.clear()
+
+    def update_dlc_options(self, *args):
+        if self.fd_var.get():
+            self.dlc_entry['values'] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "12", "16", "20", "24", "32", "48", "64"]
+        else:
+            self.dlc_entry['values'] = ["0", "1", "2", "3", "4", "5", "6", "7", "8"]
+
+    def on_dlc_change(self, *args):
+        try:
+            dlc = int(self.dlc_entry.get().strip())
+        except ValueError:
+            return
+            
+        content = self.data_entry.get().replace(" ", "")
+        try:
+            current_bytes = bytes.fromhex(content)
+        except ValueError:
+            current_bytes = b""
+            
+        if len(current_bytes) < dlc:
+            # Pad with zeros
+            new_bytes = current_bytes + b'\x00' * (dlc - len(current_bytes))
+        else:
+            # Truncate
+            new_bytes = current_bytes[:dlc]
+            
+        fmt = " ".join(f"{b:02X}" for b in new_bytes)
+        self.data_entry.delete(0, tk.END)
+        self.data_entry.insert(0, fmt)
+
+    def format_data_entry(self, event):
+        if event.keysym in ("BackSpace", "Delete", "Left", "Right", "Shift_L", "Shift_R"): return
+        content = self.data_entry.get()
+        cursor_pos = self.data_entry.index(tk.INSERT)
+        chars_before = len(content[:cursor_pos].replace(" ", ""))
+        val = "".join(c for c in content.replace(" ", "").upper() if c in "0123456789ABCDEF")
+        fmt = " ".join(val[i:i+2] for i in range(0, len(val), 2))
+        if content != fmt:
+            self.data_entry.delete(0, tk.END)
+            self.data_entry.insert(0, fmt)
+            new_pos = 0
+            seen = 0
+            for i, char in enumerate(fmt):
+                if seen == chars_before:
+                    new_pos = i
+                    break
+                if char != " ": seen += 1
+                new_pos = i + 1
+            self.data_entry.icursor(new_pos)
 
     def _create_message(self):
         dlc_str = self.dlc_entry.get().strip()
@@ -930,21 +1035,20 @@ class TxRow:
                         sig_data[sname] = 0
                 
                 data_bytes = self.msg_def.encode(sig_data)
-                # Update Hex entries for visual feedback
-                for i, b in enumerate(data_bytes):
-                    if i < len(self.data_entries):
-                        self.data_entries[i].delete(0, tk.END)
-                        self.data_entries[i].insert(0, f"{b:02X}")
             else:
-                # Use raw hex entries
-                data_bytes = []
-                for e in self.data_entries:
-                    val = e.get().strip()
-                    if val:
-                        data_bytes.append(int(val, 16))
+                # Use raw hex entry
+                val_str = self.data_entry.get().replace(" ", "")
+                data_bytes = bytes.fromhex(val_str) if val_str else b""
             
             if len(data_bytes) > dlc:
                 data_bytes = data_bytes[:dlc]
+            elif len(data_bytes) < dlc:
+                data_bytes += b'\x00' * (dlc - len(data_bytes))
+                
+            # Update Hex entry for visual feedback
+            fmt_hex = " ".join(f"{b:02X}" for b in data_bytes)
+            self.data_entry.delete(0, tk.END)
+            self.data_entry.insert(0, fmt_hex)
                 
             msg = can.Message(
                 arbitration_id=msg_id,
@@ -995,8 +1099,7 @@ class TxRow:
                 
             self.id_entry.config(state=tk.DISABLED)
             self.dlc_entry.config(state=tk.DISABLED)
-            for e in self.data_entries:
-                e.config(state=tk.DISABLED)
+            self.data_entry.config(state=tk.DISABLED)
             for e in self.sig_entries.values():
                 e.config(state=tk.DISABLED)
             self.period_entry.config(state=tk.DISABLED)
@@ -1013,8 +1116,7 @@ class TxRow:
         self.periodic_var.set(False)
         self.id_entry.config(state=tk.NORMAL)
         self.dlc_entry.config(state=tk.NORMAL)
-        for e in self.data_entries:
-            e.config(state=tk.NORMAL)
+        self.data_entry.config(state=tk.NORMAL)
         for e in self.sig_entries.values():
             e.config(state=tk.NORMAL)
         self.period_entry.config(state=tk.NORMAL)
@@ -1029,7 +1131,7 @@ class TxRow:
         # Extract signal values
         sigs = {name: entry.get() for name, entry in self.sig_entries.items()}
         # Extract data bytes
-        data = [e.get() for e in self.data_entries]
+        data = self.data_entry.get()
         
         return {
             "id": self.id_entry.get(),
@@ -1050,11 +1152,9 @@ class TxRow:
         self.dlc_entry.insert(0, state.get("dlc", "8"))
         
         # Restore hex data
-        data = state.get("data", [])
-        for i, val in enumerate(data):
-            if i < len(self.data_entries):
-                self.data_entries[i].delete(0, tk.END)
-                self.data_entries[i].insert(0, val)
+        data = state.get("data", "")
+        self.data_entry.delete(0, tk.END)
+        self.data_entry.insert(0, data)
         
         self.fd_var.set(state.get("fd", False))
         self.ext_var.set(state.get("ext", False))
