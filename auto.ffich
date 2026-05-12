@@ -8,18 +8,18 @@
     },
     "dbc": "C:/Users/franc/.gemini/antigravity/scratch/Sinergy/HLU_v2.dbc",
     "uds": {
-        "tx_id": "7E0",
+        "tx_id": "7A0",
         "rx_id": "7E8",
         "fd": false,
-        "sid": "22",
-        "payload": "F1 90"
+        "sid": "10",
+        "payload": "01"
     },
     "tx_rows": [
         {
-            "id": "700",
+            "id": "",
             "dlc": "8",
             "data": "00 00 00 00 00 00 00 00",
-            "fd": true,
+            "fd": false,
             "ext": false,
             "periodic": false,
             "period": "100",

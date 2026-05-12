@@ -8,30 +8,39 @@
     },
     "dbc": "C:/Users/franc/.gemini/antigravity/scratch/Sinergy/HLU_v2.dbc",
     "uds": {
-        "tx_id": "7E0",
-        "rx_id": "7E7",
+        "tx_id": "7A0",
+        "rx_id": "7E8",
+        "fd": false,
         "sid": "10",
         "payload": "01"
     },
     "tx_rows": [
         {
-            "id": "",
+            "id": "HLU_CMD (0x401)",
             "dlc": "8",
-            "data": [
-                "00",
-                "00",
-                "00",
-                "00",
-                "00",
-                "00",
-                "00",
-                "00"
-            ],
+            "data": "00 00 00 00 00 00 00 00",
             "fd": false,
             "ext": false,
             "periodic": false,
             "period": "100",
-            "signals": {}
+            "signals": {
+                "Lamp_Main_Cmd": "0",
+                "Lamp_Brights_Cmd": "0",
+                "Blinker_Cmd": "0",
+                "FMH_Config_Cmd": "0"
+            }
+        },
+        {
+            "id": "NM (0x500)",
+            "dlc": "3",
+            "data": "00 00 00 00 00 00 00 00",
+            "fd": false,
+            "ext": false,
+            "periodic": false,
+            "period": "100",
+            "signals": {
+                "HLU_Shutdown": "0"
+            }
         }
     ]
 }
